@@ -95,6 +95,13 @@ function showInstructions(mode){
         startBtn.onclick=()=> { overlay.style.display="none"; startGame(mode); };
         overlay.appendChild(startBtn);
     }
+
+    <!-- ✅ GO BACK BUTTON ADDED -->
+    let backBtn=document.createElement("div");
+    backBtn.className="btn";
+    backBtn.innerText="Go Back";
+    backBtn.onclick=showMainMenu;
+    overlay.appendChild(backBtn);
 }
 function showController(){
     overlay.innerHTML="<h1>CONTROLS</h1><p>WASD to move, Left Click to shoot.\nMiddle Click to use ability.\nShift to exit.</p>";
@@ -147,15 +154,20 @@ window.addEventListener("resize", resizeCanvas); resizeCanvas();
 function initStars(){ stars=[]; for(let i=0;i<100;i++){ stars.push({x:Math.random()*canvas.width,y:Math.random()*canvas.height,size:Math.random()*2+1,speed:Math.random()*0.5+0.2}); } }
 
 // --- Input ---
-function keyDownHandler(e){ keys[e.key.toLowerCase()]=true; if(e.key==="Shift") returnToMenu(); }
+function keyDownHandler(e){
+    keys[e.key.toLowerCase()]=true;
+    if(e.key === "Shift" || e.key === "ShiftLeft" || e.key === "ShiftRight"){
+        returnToMenu();
+    }
+}
 function keyUpHandler(e){ keys[e.key.toLowerCase()]=false; }
 function mouseDownHandler(e){
     if(shopOpen) return;
-    if(e.button===0){ // left click
+    if(e.button===0){
         const angle=Math.atan2(e.clientY-player.y, e.clientX-player.x);
         bullets.push({x:player.x+player.size/2,y:player.y+player.size/2,size:5,dx:Math.cos(angle)*10,dy:Math.sin(angle)*10,trail:[]});
     }
-    if(e.button===1){ // middle click
+    if(e.button===1){
         for(const key in powers){
             if(powers[key].equipped && powers[key].timer<=0){
                 if(key==="bomb") activateBomb(); 
@@ -215,10 +227,8 @@ function returnToMenu(){
 function gameLoop(){
     if(!gameRunning) return;
     ctx.fillStyle="black"; ctx.fillRect(0,0,canvas.width,canvas.height);
-    // Stars
     for(let s of stars){ s.y+=s.speed; if(s.y>canvas.height)s.y=0; ctx.globalAlpha=0.8; ctx.fillStyle="white"; ctx.fillRect(s.x,s.y,s.size,s.size); }
     ctx.globalAlpha=1;
-    // Player
     if(keys["w"]) player.y-=player.speed;
     if(keys["s"]) player.y+=player.speed;
     if(keys["a"]) player.x-=player.speed;
@@ -226,7 +236,6 @@ function gameLoop(){
     player.x=Math.max(0,Math.min(canvas.width-player.size,player.x));
     player.y=Math.max(0,Math.min(canvas.height-player.size,player.y));
     ctx.fillStyle="white"; ctx.fillRect(player.x,player.y,player.size,player.size);
-    // Bullets
     for(let i=bullets.length-1;i>=0;i--){
         let b=bullets[i]; b.trail.push({x:b.x,y:b.y}); if(b.trail.length>5)b.trail.shift();
         for(let t of b.trail){ ctx.fillStyle="rgba(255,255,0,0.3)"; ctx.fillRect(t.x-2,t.y-2,4,4); }
@@ -234,16 +243,13 @@ function gameLoop(){
         ctx.fillStyle="yellow"; ctx.fillRect(b.x-b.size/2,b.y-b.size/2,b.size,b.size);
         if(b.x<0||b.x>canvas.width||b.y<0||b.y>canvas.height) bullets.splice(i,1);
     }
-    // --- ENEMIES FIXED ---
     for(let i=enemies.length-1;i>=0;i--){
         let e=enemies[i];
         const dx=player.x - e.x, dy=player.y - e.y, dist=Math.sqrt(dx*dx+dy*dy);
-
         if(e.type==="purple"){ 
             e.x += dx/dist * e.speed; 
             e.y += dy/dist * e.speed; 
         } else { 
-            // RED ENEMIES NOW FOLLOW AND SHOOT
             if(dist!==0){ e.x += dx/dist * e.speed; e.y += dy/dist * e.speed; }
             e.shootTimer++;
             if(e.shootTimer >= e.shootCd){
@@ -252,18 +258,13 @@ function gameLoop(){
                 e.shootTimer=0;
             }
         }
-
         ctx.fillStyle=e.type==="purple"?"purple":"red"; 
         ctx.fillRect(e.x,e.y,e.size,e.size);
-
-        // Collision with player
         if(player.x<e.x+e.size && player.x+player.size>e.x && player.y<e.y+e.size && player.y+player.size>e.y){
             player.lives--; enemies.splice(i,1);
             if(player.lives<=0 && !dying){ dying=true; fadeAlpha=0; }
             continue;
         }
-
-        // Collision with bullets
         for(let j=bullets.length-1;j>=0;j--){
             let b=bullets[j];
             if(b.x>e.x && b.x<e.x+e.size && b.y>e.y && b.y<e.y+e.size){
@@ -276,7 +277,6 @@ function gameLoop(){
             }
         }
     }
-    // Enemy bullets
     for(let i=enemyBullets.length-1;i>=0;i--){
         let b=enemyBullets[i]; b.x+=b.dx; b.y+=b.dy;
         ctx.fillStyle=b.friendly?"lightblue":"orange"; ctx.fillRect(b.x-b.size/2,b.y-b.size/2,b.size,b.size);
@@ -286,19 +286,14 @@ function gameLoop(){
             if(player.lives<=0 && !dying){ dying=true; fadeAlpha=0; }
         }
     }
-    // Particles
     for(let i=particles.length-1;i>=0;i--){ let p=particles[i]; p.x+=p.dx; p.y+=p.dy; p.life--; ctx.fillStyle=p.color; ctx.globalAlpha=p.life/50; ctx.fillRect(p.x,p.y,p.size,p.size); ctx.globalAlpha=1; if(p.life<=0) particles.splice(i,1);}
-    // Floating scores
     for(let i=floatingScores.length-1;i>=0;i--){ let fs=floatingScores[i]; fs.y-=0.5; fs.alpha-=0.02; ctx.fillStyle=`rgba(255,255,0,${fs.alpha})`; ctx.font="20px Arial"; ctx.textAlign="center"; ctx.fillText(fs.value, fs.x, fs.y); if(fs.alpha<=0) floatingScores.splice(i,1);}
-    // HUD
     ctx.textAlign="center"; ctx.fillStyle="white"; ctx.font="20px Arial";
     ctx.fillText(`Lives: ${player.lives}   Score: ${score}   High Score: ${highScore}`,canvas.width/2,30);
-    // Power-up display
     let powerText=""; for(const key in powers){ const p=powers[key]; if(!p.unlocked) powerText+=`${key.toUpperCase()}: LOCKED  `; else if(p.timer>0) powerText+=`${key.toUpperCase()}: ${Math.ceil(p.timer/60)}s  `; else if(p.equipped) powerText+=`${key.toUpperCase()}: READY  `; else powerText+=`${key.toUpperCase()}: AVAILABLE  `; }
     ctx.fillText(powerText.trim(),canvas.width/2,60);
     if(powers.bomb.timer>0) powers.bomb.timer--; if(powers.spread.timer>0) powers.spread.timer--;
     checkUnlocks();
-    // Death fade
     if(dying){
         if(fadeAlpha<1) fadeAlpha+=0.02;
         ctx.fillStyle=`rgba(0,0,0,${fadeAlpha})`; ctx.fillRect(0,0,canvas.width,canvas.height);
