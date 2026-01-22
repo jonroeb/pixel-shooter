@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Pixel Shooter Ultimate</title>
+<style>
+body { margin:0; overflow:hidden; background:black; font-family: Arial; }
+canvas { display:block; background:black; }
+#overlay {
+    position:absolute; top:0; left:0; width:100%; height:100%;
+    display:flex; align-items:center; justify-content:center;
+    flex-direction:column;
+    color:white; font-size:40px; text-align:center;
+    background:black;
+}
+.btn {
+    display:block;
+    margin:10px;
+    padding:10px 20px;
+    background:white; color:black;
+    font-size:24px;
+    cursor:pointer;
+    border-radius:5px;
+}
+.btn:hover { background:#ccc; }
+</style>
+</head>
+<body>
+<div id="overlay"></div>
+<canvas id="gameCanvas"></canvas>
+<script>
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+let overlay = document.getElementById("overlay");
+resizeCanvas();
+
+// --- Globals ---
+let player, keys, bullets=[], enemies=[], enemyBullets=[], particles=[], floatingScores=[], stars=[];
+let gameRunning=false, dying=false, fadeAlpha=0, dyingWaitListenerAdded=false;
+let score=0, highScore = localStorage.getItem("pixelShooterHighScore") || 0;
+let powers = { bomb:{unlocked:false,equipped:false,cooldown:30,timer:0 }, spread:{unlocked:false,equipped:false,cooldown:45,timer:0} };
+let shopOpen=false;
+
+// --- Intro & Menu ---
+function startIntro(){
+    overlay.innerHTML = "PIXEL STUDIOS PRESENTS";
+    overlay.style.color = "white";
+    overlay.style.fontSize = "50px";
+    overlay.style.display = "flex";
+    setTimeout(()=> startGameTitle(), 2000);
+}
+function startGameTitle(){
+    let colors=["red","green","blue"], colorIndex=0;
+    overlay.innerHTML="PIXEL SHOOTER ULTIMATE";
+    overlay.style.fontSize="60px";
+    let interval=setInterval(()=>{
+        overlay.style.color=colors[colorIndex];
+        colorIndex=(colorIndex+1)%colors.length;
+    },300);
+    setTimeout(()=> { clearInterval(interval); showMainMenu(); },3000);
+}
+function showMainMenu(){
+    overlay.innerHTML = "<h1>PIXEL SHOOTER ULTIMATE</h1>";
+    const modes = ["easy","normal","hard","story"];
+    modes.forEach(mode=>{
+        let btn=document.createElement("div");
+        btn.className="btn"; 
+        btn.innerText = mode.charAt(0).toUpperCase() + mode.slice(1);
+        btn.onclick = ()=> showInstructions(mode);
+        overlay.appendChild(btn);
+    });
+    let shopBtn=document.createElement("div");
+    shopBtn.className="btn"; shopBtn.innerText="Shop";
+    shopBtn.onclick = openShop;
+    overlay.appendChild(shopBtn);
+    let controllerBtn=document.createElement("div");
+    controllerBtn.className="btn"; controllerBtn.innerText="Controller";
+    controllerBtn.onclick = showController;
+    overlay.appendChild(controllerBtn);
+}
+function showInstructions(mode){
+    overlay.innerHTML="";
+    let instrText="";
+    if(mode==="story"){ instrText="Coming soon..."; } 
+    else { instrText="Shoot enemies to get points.\nAvoid attacks."; }
+    let instr=document.createElement("div");
+    instr.style.whiteSpace="pre-wrap";
+    instr.style.fontSize="30px";
+    instr.style.marginBottom="30px";
+    instr.innerText=instrText;
+    overlay.appendChild(instr);
+    if(mode!=="story"){
+        let startBtn=document.createElement("div");
+        startBtn.className="btn"; startBtn.innerText="Start Game";
+        startBtn.onclick=()=> { overlay.style.display="none"; startGame(mode); };
+        overlay.appendChild(startBtn);
+    }
+}
+function showController(){
+    overlay.innerHTML="<h1>CONTROLS</h1><p>WASD to move, Left Click to shoot.\nMiddle Click to use ability.\nShift to exit.</p>";
+    let back=document.createElement("div"); back.className="btn"; back.innerText="Back to Menu"; back.onclick=showMainMenu;
+    overlay.appendChild(back);
+}
+
+// --- Shop ---
+function openShop(){
+    overlay.style.display="flex";
+    overlay.innerHTML="<h1>SHOP</h1>";
+    let yStart=150, i=0;
+    for(const key in powers){
+        const p=powers[key];
+        let status=p.unlocked? (p.equipped?"EQUIPPED":"AVAILABLE"):"LOCKED";
+        let txt=document.createElement("div");
+        txt.className="btn";
+        txt.innerText=`${key.toUpperCase()}: ${status}`;
+        txt.onclick=()=>{ if(p.unlocked){ p.equipped=!p.equipped; openShop(); } };
+        overlay.appendChild(txt);
+    }
+    let back=document.createElement("div"); back.className="btn"; back.innerText="Back to Menu"; back.onclick=showMainMenu;
+    overlay.appendChild(back);
+}
+
+// --- Game ---
+function startGame(mode){
+    overlay.style.display="none";
+    gameRunning=true; dying=false; fadeAlpha=0; dyingWaitListenerAdded=false;
+    score=0; bullets=[]; enemies=[]; enemyBullets=[]; particles=[]; floatingScores=[]; keys={};
+    let spawnRate, enemySpeed, shootCd;
+    switch(mode){
+        case "easy": spawnRate=2500; enemySpeed=1.5; shootCd=150; break;
+        case "normal": spawnRate=2000; enemySpeed=2; shootCd=100; break;
+        case "hard": spawnRate=1200; enemySpeed=3; shootCd=60; break;
+    }
+    player={x:canvas.width/2, y:canvas.height/2, size:20, speed:5, lives:3};
+    window.addEventListener("keydown", keyDownHandler);
+    window.addEventListener("keyup", keyUpHandler);
+    window.addEventListener("mousedown", mouseDownHandler);
+    window.addEventListener("contextmenu", e=>e.preventDefault());
+    setInterval(()=>spawnEnemy(enemySpeed,shootCd),spawnRate);
+    initStars();
+    gameLoop();
+}
+
+// --- Resize & Stars ---
+function resizeCanvas(){ canvas.width=window.innerWidth; canvas.height=window.innerHeight; }
+window.addEventListener("resize", resizeCanvas); resizeCanvas();
+function initStars(){ stars=[]; for(let i=0;i<100;i++){ stars.push({x:Math.random()*canvas.width,y:Math.random()*canvas.height,size:Math.random()*2+1,speed:Math.random()*0.5+0.2}); } }
+
+// --- Input ---
+function keyDownHandler(e){ keys[e.key.toLowerCase()]=true; if(e.key==="Shift") returnToMenu(); }
+function keyUpHandler(e){ keys[e.key.toLowerCase()]=false; }
+function mouseDownHandler(e){
+    if(shopOpen) return;
+    if(e.button===0){ // left click
+        const angle=Math.atan2(e.clientY-player.y, e.clientX-player.x);
+        bullets.push({x:player.x+player.size/2,y:player.y+player.size/2,size:5,dx:Math.cos(angle)*10,dy:Math.sin(angle)*10,trail:[]});
+    }
+    if(e.button===1){ // middle click
+        for(const key in powers){
+            if(powers[key].equipped && powers[key].timer<=0){
+                if(key==="bomb") activateBomb(); 
+                if(key==="spread") activateSpread();
+                powers[key].timer = powers[key].cooldown*60;
+            }
+        }
+    }
+}
+
+// --- Spawn Enemies ---
+function spawnEnemy(speed,shootCd){
+    const size=20;
+    let x=Math.random()*canvas.width, y=-size;
+    let type=Math.random()<0.2?"purple":"red";
+    enemies.push({x,y,size,speed:type==="purple"?3:speed,shootCd:shootCd,shootTimer:0,type});
+}
+
+// --- Powers ---
+function activateBomb(){
+    createParticles(player.x,player.y,"green",30);
+    const radius=200;
+    enemies=enemies.filter(e=>{
+        const dx=(e.x+e.size/2)-(player.x+player.size/2), dy=(e.y+e.size/2)-(player.y+player.size/2);
+        if(Math.sqrt(dx*dx+dy*dy)<radius){ createParticles(e.x+e.size/2,e.y+e.size/2,"green",15); score+=10; createFloatingScore(e.x+e.size/2,e.y,"+10"); return false; }
+        return true;
+    });
+}
+function activateSpread(){
+    const num=12;
+    for(let i=0;i<num;i++){
+        const angle=i*(2*Math.PI/num);
+        enemyBullets.push({x:player.x+player.size/2,y:player.y+player.size/2,size:5,dx:Math.cos(angle)*5,dy:Math.sin(angle)*5,friendly:true});
+    }
+}
+
+// --- Particles & Floating Scores ---
+function createParticles(x,y,color,count=10){ for(let i=0;i<count;i++){ particles.push({x,y,dx:(Math.random()-0.5)*4,dy:(Math.random()-0.5)*4,size:Math.random()*3+1,life:Math.random()*30+30,color}); } }
+function createFloatingScore(x,y,value){ floatingScores.push({x,y,value,alpha:1}); }
+function checkUnlocks(){
+    if(score>=250 && !powers.bomb.unlocked) { powers.bomb.unlocked=true; alert("Bomb power unlocked!"); }
+    if(score>=250 && !powers.spread.unlocked) { powers.spread.unlocked=true; alert("Spread power unlocked!"); }
+}
+
+// --- Return to Menu ---
+function returnToMenu(){
+    gameRunning=false; shopOpen=false;
+    overlay.style.display="flex";
+    overlay.innerHTML="";
+    showMainMenu();
+    window.removeEventListener("keydown",keyDownHandler);
+    window.removeEventListener("keyup",keyUpHandler);
+    window.removeEventListener("mousedown",mouseDownHandler);
+}
+
+// --- Game Loop ---
+function gameLoop(){
+    if(!gameRunning) return;
+    ctx.fillStyle="black"; ctx.fillRect(0,0,canvas.width,canvas.height);
+    // Stars
+    for(let s of stars){ s.y+=s.speed; if(s.y>canvas.height)s.y=0; ctx.globalAlpha=0.8; ctx.fillStyle="white"; ctx.fillRect(s.x,s.y,s.size,s.size); }
+    ctx.globalAlpha=1;
+    // Player
+    if(keys["w"]) player.y-=player.speed;
+    if(keys["s"]) player.y+=player.speed;
+    if(keys["a"]) player.x-=player.speed;
+    if(keys["d"]) player.x+=player.speed;
+    player.x=Math.max(0,Math.min(canvas.width-player.size,player.x));
+    player.y=Math.max(0,Math.min(canvas.height-player.size,player.y));
+    ctx.fillStyle="white"; ctx.fillRect(player.x,player.y,player.size,player.size);
+    // Bullets
+    for(let i=bullets.length-1;i>=0;i--){
+        let b=bullets[i]; b.trail.push({x:b.x,y:b.y}); if(b.trail.length>5)b.trail.shift();
+        for(let t of b.trail){ ctx.fillStyle="rgba(255,255,0,0.3)"; ctx.fillRect(t.x-2,t.y-2,4,4); }
+        b.x+=b.dx; b.y+=b.dy;
+        ctx.fillStyle="yellow"; ctx.fillRect(b.x-b.size/2,b.y-b.size/2,b.size,b.size);
+        if(b.x<0||b.x>canvas.width||b.y<0||b.y>canvas.height) bullets.splice(i,1);
+    }
+    // --- ENEMIES FIXED ---
+    for(let i=enemies.length-1;i>=0;i--){
+        let e=enemies[i];
+        const dx=player.x - e.x, dy=player.y - e.y, dist=Math.sqrt(dx*dx+dy*dy);
+
+        if(e.type==="purple"){ 
+            e.x += dx/dist * e.speed; 
+            e.y += dy/dist * e.speed; 
+        } else { 
+            // RED ENEMIES NOW FOLLOW AND SHOOT
+            if(dist!==0){ e.x += dx/dist * e.speed; e.y += dy/dist * e.speed; }
+            e.shootTimer++;
+            if(e.shootTimer >= e.shootCd){
+                const angle=Math.atan2(player.y-e.y, player.x-e.x);
+                enemyBullets.push({x:e.x+e.size/2, y:e.y+e.size/2, size:5, dx:Math.cos(angle)*4, dy:Math.sin(angle)*4, friendly:false});
+                e.shootTimer=0;
+            }
+        }
+
+        ctx.fillStyle=e.type==="purple"?"purple":"red"; 
+        ctx.fillRect(e.x,e.y,e.size,e.size);
+
+        // Collision with player
+        if(player.x<e.x+e.size && player.x+player.size>e.x && player.y<e.y+e.size && player.y+player.size>e.y){
+            player.lives--; enemies.splice(i,1);
+            if(player.lives<=0 && !dying){ dying=true; fadeAlpha=0; }
+            continue;
+        }
+
+        // Collision with bullets
+        for(let j=bullets.length-1;j>=0;j--){
+            let b=bullets[j];
+            if(b.x>e.x && b.x<e.x+e.size && b.y>e.y && b.y<e.y+e.size){
+                bullets.splice(j,1);
+                enemies.splice(i,1);
+                score+= (e.type==="purple"?30:20);
+                createFloatingScore(e.x+e.size/2,e.y,`+${e.type==="purple"?30:20}`);
+                createParticles(e.x+e.size/2,e.y+e.size/2,e.type,15);
+                break;
+            }
+        }
+    }
+    // Enemy bullets
+    for(let i=enemyBullets.length-1;i>=0;i--){
+        let b=enemyBullets[i]; b.x+=b.dx; b.y+=b.dy;
+        ctx.fillStyle=b.friendly?"lightblue":"orange"; ctx.fillRect(b.x-b.size/2,b.y-b.size/2,b.size,b.size);
+        if(b.x<0||b.x>canvas.width||b.y<0||b.y>canvas.height){ enemyBullets.splice(i,1); continue; }
+        if(!b.friendly && b.x>player.x && b.x<player.x+player.size && b.y>player.y && b.y<player.y+player.size){
+            player.lives--; enemyBullets.splice(i,1);
+            if(player.lives<=0 && !dying){ dying=true; fadeAlpha=0; }
+        }
+    }
+    // Particles
+    for(let i=particles.length-1;i>=0;i--){ let p=particles[i]; p.x+=p.dx; p.y+=p.dy; p.life--; ctx.fillStyle=p.color; ctx.globalAlpha=p.life/50; ctx.fillRect(p.x,p.y,p.size,p.size); ctx.globalAlpha=1; if(p.life<=0) particles.splice(i,1);}
+    // Floating scores
+    for(let i=floatingScores.length-1;i>=0;i--){ let fs=floatingScores[i]; fs.y-=0.5; fs.alpha-=0.02; ctx.fillStyle=`rgba(255,255,0,${fs.alpha})`; ctx.font="20px Arial"; ctx.textAlign="center"; ctx.fillText(fs.value, fs.x, fs.y); if(fs.alpha<=0) floatingScores.splice(i,1);}
+    // HUD
+    ctx.textAlign="center"; ctx.fillStyle="white"; ctx.font="20px Arial";
+    ctx.fillText(`Lives: ${player.lives}   Score: ${score}   High Score: ${highScore}`,canvas.width/2,30);
+    // Power-up display
+    let powerText=""; for(const key in powers){ const p=powers[key]; if(!p.unlocked) powerText+=`${key.toUpperCase()}: LOCKED  `; else if(p.timer>0) powerText+=`${key.toUpperCase()}: ${Math.ceil(p.timer/60)}s  `; else if(p.equipped) powerText+=`${key.toUpperCase()}: READY  `; else powerText+=`${key.toUpperCase()}: AVAILABLE  `; }
+    ctx.fillText(powerText.trim(),canvas.width/2,60);
+    if(powers.bomb.timer>0) powers.bomb.timer--; if(powers.spread.timer>0) powers.spread.timer--;
+    checkUnlocks();
+    // Death fade
+    if(dying){
+        if(fadeAlpha<1) fadeAlpha+=0.02;
+        ctx.fillStyle=`rgba(0,0,0,${fadeAlpha})`; ctx.fillRect(0,0,canvas.width,canvas.height);
+        ctx.fillStyle=`rgba(255,0,0,${fadeAlpha})`; ctx.font="60px Arial"; ctx.fillText("You Died",canvas.width/2,canvas.height/2);
+        if(fadeAlpha>=1 && !dyingWaitListenerAdded){
+            dyingWaitListenerAdded=true;
+            function cont(){ dying=false; dyingWaitListenerAdded=false; returnToMenu(); window.removeEventListener("keydown",cont); window.removeEventListener("mousedown",cont);}
+            window.addEventListener("keydown",cont); window.addEventListener("mousedown",cont);
+        }
+    }
+    requestAnimationFrame(gameLoop);
+}
+
+// --- Start ---
+startIntro();
+</script>
+</body>
+</html>
